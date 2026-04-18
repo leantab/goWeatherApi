@@ -1,2 +1,2 @@
-@ Go Weather API
+# Go Weather API
 
