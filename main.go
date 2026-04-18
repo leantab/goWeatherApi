@@ -185,41 +185,7 @@ func getWeather(city string, country string, w http.ResponseWriter) {
 	}
 
 	//get lat and lon from city name using Google Geocoding API
-	googleMapsApiKey := os.Getenv("GOOGLE_MAPS_API_KEY")
-	if googleMapsApiKey == "" {
-		http.Error(w, "Error: GOOGLE_MAPS_API_KEY environment variable is not set", http.StatusInternalServerError)
-		return
-	}
-	geoUrl := fmt.Sprintf("https://maps.googleapis.com/maps/api/geocode/json?address=%s,%s&key=%s", city, country, googleMapsApiKey)
-	geoResp, err := http.Get(geoUrl)
-	if err != nil {
-		http.Error(w, "Error making request to Google Maps API", http.StatusInternalServerError)
-		return
-	}
-	defer geoResp.Body.Close()
-	if geoResp.StatusCode != 200 {
-		http.Error(w, "Error: Google Maps API returned status code "+geoResp.Status, http.StatusInternalServerError)
-		return
-	}
-	geoBody, err := io.ReadAll(geoResp.Body)
-	if err != nil {
-		http.Error(w, "Error reading response from Google Maps API", http.StatusInternalServerError)
-		return
-	}
-	var geoData GeoData
-	if err := json.Unmarshal(geoBody, &geoData); err != nil {
-		http.Error(w, "Error parsing JSON from Google Maps API", http.StatusInternalServerError)
-		return
-	}
-
-	if len(geoData.Results) == 0 {
-		http.Error(w, "Error: No results found for the city", http.StatusInternalServerError)
-		return
-	}
-
-	lat := geoData.Results[0].Geometry.Location.Lat
-	lon := geoData.Results[0].Geometry.Location.Lng
-
+	lat, lon := getLetLong(city, country, w)
 	if lat == 0 || lon == 0 {
 		http.Error(w, "Error: No results found for the city", http.StatusInternalServerError)
 		return
@@ -269,6 +235,46 @@ func getWeather(city string, country string, w http.ResponseWriter) {
 		return
 	}
 	parseResponseFromOpenWeather(data, w)
+}
+
+func getLetLong(city string, country string, w http.ResponseWriter) (float64, float64) {
+	//get lat and lon from city name using Google Geocoding API
+	googleMapsApiKey := os.Getenv("GOOGLE_MAPS_API_KEY")
+	if googleMapsApiKey == "" {
+		http.Error(w, "Error: GOOGLE_MAPS_API_KEY environment variable is not set", http.StatusInternalServerError)
+		return 0, 0
+	}
+	geoUrl := fmt.Sprintf("https://maps.googleapis.com/maps/api/geocode/json?address=%s,%s&key=%s", city, country, googleMapsApiKey)
+	geoResp, err := http.Get(geoUrl)
+	if err != nil {
+		http.Error(w, "Error making request to Google Maps API", http.StatusInternalServerError)
+		return 0, 0
+	}
+	defer geoResp.Body.Close()
+	if geoResp.StatusCode != 200 {
+		http.Error(w, "Error: Google Maps API returned status code "+geoResp.Status, http.StatusInternalServerError)
+		return 0, 0
+	}
+	geoBody, err := io.ReadAll(geoResp.Body)
+	if err != nil {
+		http.Error(w, "Error reading response from Google Maps API", http.StatusInternalServerError)
+		return 0, 0
+	}
+	var geoData GeoData
+	if err := json.Unmarshal(geoBody, &geoData); err != nil {
+		http.Error(w, "Error parsing JSON from Google Maps API", http.StatusInternalServerError)
+		return 0, 0
+	}
+
+	if len(geoData.Results) == 0 {
+		http.Error(w, "Error: No results found for the city", http.StatusInternalServerError)
+		return 0, 0
+	}
+
+	lat := geoData.Results[0].Geometry.Location.Lat
+	lon := geoData.Results[0].Geometry.Location.Lng
+
+	return lat, lon
 }
 
 func parseResponseFromGoogle(data GoogleWeatherData, w http.ResponseWriter) {
