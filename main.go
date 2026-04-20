@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 )
 
@@ -157,37 +158,34 @@ func main() {
 	// city := os.Args[1]
 	// country := os.Args[2]
 
-	http.HandleFunc("/weather", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet {
-			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		var formFields FormFields
-		formFields.City = r.URL.Query().Get("city")
-		formFields.Country = r.URL.Query().Get("country")
-
-		if formFields.City == "" || formFields.Country == "" {
-			http.Error(w, "Missing city or country", http.StatusBadRequest)
-			return
-		}
-		getWeather(formFields.City, formFields.Country, w)
-	})
-
-	http.ListenAndServe(":8080", nil)
+	r := gin.Default()
+	r.GET("/weather", getWeatherApi)
+	r.Run(":8080")
 }
 
-func getWeather(city string, country string, w http.ResponseWriter) {
+func getWeatherApi(c *gin.Context) {
+	city := c.Query("city")
+	country := c.Query("country")
+
+	if city == "" || country == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing city or country"})
+		return
+	}
+	getWeather(city, country, c)
+}
+
+func getWeather(city string, country string, c *gin.Context) {
 	// Get API key from environment variable
 	weatherApiKey := os.Getenv("WEATHER_API_KEY")
 	if weatherApiKey == "" {
-		http.Error(w, "Error: WEATHER_API_KEY environment variable is not set", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "WEATHER_API_KEY environment variable is not set"})
 		return
 	}
 
 	//get lat and lon from city name using Google Geocoding API
-	lat, lon := getLetLong(city, country, w)
-	if lat == 0 || lon == 0 {
-		http.Error(w, "Error: No results found for the city", http.StatusInternalServerError)
+	lat, lon, err := getLetLong(city, country)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -201,24 +199,22 @@ func getWeather(city string, country string, w http.ResponseWriter) {
 	// Make HTTP request
 	resp, err := http.Get(url)
 	if err != nil {
-		http.Error(w, "Error making request to Google Maps Weather API", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error making request to Weather API"})
 		return
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != 200 {
-		http.Error(w, "Error: Google Maps Weather API returned status code "+resp.Status, http.StatusInternalServerError)
+	if resp.StatusCode != http.StatusOK {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Weather API returned status code " + resp.Status})
 		return
 	}
 
 	// Read response body
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		http.Error(w, "Error reading response from Google Maps Weather API", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error reading response from Weather API"})
 		return
 	}
-
-	http.ResponseWriter.Write(w, []byte(fmt.Sprintf("Weather in %s, %s:\n", city, country)))
 
 	// Parse JSON
 	// if useGoogleWeather {
@@ -231,65 +227,67 @@ func getWeather(city string, country string, w http.ResponseWriter) {
 	// } else {
 	var data WeartherApiData
 	if err := json.Unmarshal(body, &data); err != nil {
-		http.Error(w, "Error parsing JSON from OpenWeather API", http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error parsing JSON from OpenWeather API"})
 		return
 	}
-	parseResponseFromOpenWeather(data, w)
+	parseResponseFromOpenWeather(data, c, city, country)
 }
 
-func getLetLong(city string, country string, w http.ResponseWriter) (float64, float64) {
+func getLetLong(city string, country string) (float64, float64, error) {
 	//get lat and lon from city name using Google Geocoding API
 	googleMapsApiKey := os.Getenv("GOOGLE_MAPS_API_KEY")
 	if googleMapsApiKey == "" {
-		http.Error(w, "Error: GOOGLE_MAPS_API_KEY environment variable is not set", http.StatusInternalServerError)
-		return 0, 0
+		return 0, 0, fmt.Errorf("GOOGLE_MAPS_API_KEY environment variable is not set")
 	}
 	geoUrl := fmt.Sprintf("https://maps.googleapis.com/maps/api/geocode/json?address=%s,%s&key=%s", city, country, googleMapsApiKey)
 	geoResp, err := http.Get(geoUrl)
 	if err != nil {
-		http.Error(w, "Error making request to Google Maps API", http.StatusInternalServerError)
-		return 0, 0
+		return 0, 0, fmt.Errorf("error making request to Google Maps API: %v", err)
 	}
 	defer geoResp.Body.Close()
-	if geoResp.StatusCode != 200 {
-		http.Error(w, "Error: Google Maps API returned status code "+geoResp.Status, http.StatusInternalServerError)
-		return 0, 0
+	if geoResp.StatusCode != http.StatusOK {
+		return 0, 0, fmt.Errorf("Google Maps API returned status code %s", geoResp.Status)
 	}
 	geoBody, err := io.ReadAll(geoResp.Body)
 	if err != nil {
-		http.Error(w, "Error reading response from Google Maps API", http.StatusInternalServerError)
-		return 0, 0
+		return 0, 0, fmt.Errorf("error reading response from Google Maps API: %v", err)
 	}
 	var geoData GeoData
 	if err := json.Unmarshal(geoBody, &geoData); err != nil {
-		http.Error(w, "Error parsing JSON from Google Maps API", http.StatusInternalServerError)
-		return 0, 0
+		return 0, 0, fmt.Errorf("error parsing JSON from Google Maps API: %v", err)
 	}
 
 	if len(geoData.Results) == 0 {
-		http.Error(w, "Error: No results found for the city", http.StatusInternalServerError)
-		return 0, 0
+		return 0, 0, fmt.Errorf("no results found for the city")
 	}
 
 	lat := geoData.Results[0].Geometry.Location.Lat
 	lon := geoData.Results[0].Geometry.Location.Lng
 
-	return lat, lon
+	return lat, lon, nil
 }
 
-func parseResponseFromGoogle(data GoogleWeatherData, w http.ResponseWriter) {
+func parseResponseFromGoogle(data GoogleWeatherData, c *gin.Context, city string, country string) {
 	// Print weather information
-	http.ResponseWriter.Write(w, []byte(fmt.Sprintf("Temperature: %.1f°C\n", data.Temperature.Degrees)))
-	http.ResponseWriter.Write(w, []byte(fmt.Sprintf("Condition: %s\n", data.WeatherCondition.Description.Text)))
-	http.ResponseWriter.Write(w, []byte(fmt.Sprintf("Wind: %.1f km/h\n", data.Wind.Speed.Value)))
-	http.ResponseWriter.Write(w, []byte(fmt.Sprintf("Humidity: %.1f%%\n", data.RelativeHumidity)))
+	c.JSON(http.StatusOK, gin.H{
+		"city":        city,
+		"country":     country,
+		"temperature": data.Temperature.Degrees,
+		"condition":   data.WeatherCondition.Description.Text,
+		"wind":        data.Wind.Speed.Value,
+		"humidity":    data.RelativeHumidity,
+	})
 }
 
-func parseResponseFromOpenWeather(data WeartherApiData, w http.ResponseWriter) {
+func parseResponseFromOpenWeather(data WeartherApiData, c *gin.Context, city string, country string) {
 	// Print weather information
-	http.ResponseWriter.Write(w, []byte(fmt.Sprintf("Temperature: %.1f°C\n", data.Current.Temp)))
-	http.ResponseWriter.Write(w, []byte(fmt.Sprintf("Condition: %s\n", data.Current.Weather[0].Main)))
-	http.ResponseWriter.Write(w, []byte(fmt.Sprintf("Wind: %.1f km/h\n", data.Current.WindSpeed)))
-	http.ResponseWriter.Write(w, []byte(fmt.Sprintf("Humidity: %.1f%%\n", data.Current.Humidity)))
-	http.ResponseWriter.Write(w, []byte(fmt.Sprintf("Data: %v\n", data)))
+	c.JSON(http.StatusOK, gin.H{
+		"city":        city,
+		"country":     country,
+		"temperature": data.Current.Temp,
+		"condition":   data.Current.Weather[0].Main,
+		"wind":        data.Current.WindSpeed,
+		"humidity":    data.Current.Humidity,
+		"data":        data,
+	})
 }
