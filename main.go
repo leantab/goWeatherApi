@@ -7,185 +7,54 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/gin-gonic/gin"
+	"goWeatherApi/internal"
+
 	"github.com/joho/godotenv"
+	"github.com/labstack/echo/v5"
+	"github.com/labstack/echo/v5/middleware"
 )
-
-type GoogleWeatherData struct {
-	CurrentTime string `json:"currentTime"`
-	TimeZone    struct {
-		Id string `json:"id"`
-	} `json:"timeZone"`
-	IsDaytime        bool `json:"isDaytime"`
-	WeatherCondition struct {
-		IconBaseUri string `json:"iconBaseUri"`
-		Description struct {
-			Text         string `json:"text"`
-			LanguageCode string `json:"languageCode"`
-		} `json:"description"`
-		Type string `json:"type"`
-	}
-	Temperature struct {
-		Degrees float64 `json:"degrees"`
-		Unit    string  `json:"unit"`
-	}
-	FeelsLikeTemperature struct {
-		Degrees float64 `json:"degrees"`
-		Unit    string  `json:"unit"`
-	}
-	DewPoint struct {
-		Degrees float64 `json:"degrees"`
-		Unit    string  `json:"unit"`
-	}
-	HeatIndex struct {
-		Degrees float64 `json:"degrees"`
-		Unit    string  `json:"unit"`
-	}
-	WindChill struct {
-		Degrees float64 `json:"degrees"`
-		Unit    string  `json:"unit"`
-	}
-	RelativeHumidity float64 `json:"relativeHumidity"`
-	UvIndex          float64 `json:"uvIndex"`
-	Precipitation    struct {
-		Probability struct {
-			Percent float64 `json:"percent"`
-			Type    string  `json:"type"`
-		}
-		Qpf struct {
-			Quantity float64 `json:"quantity"`
-			Unit     string  `json:"unit"`
-		}
-	}
-	ThunderstormProbability float64 `json:"thunderstormProbability"`
-	AirPressure             struct {
-		MeanSeaLevelMillibars float64 `json:"meanSeaLevelMillibars"`
-	}
-	Wind struct {
-		Direction struct {
-			Degrees  int    `json:"degrees"`
-			Cardinal string `json:"cardinal"`
-		}
-		Speed struct {
-			Value float64 `json:"value"`
-			Unit  string  `json:"unit"`
-		}
-		Gust struct {
-			Value float64 `json:"value"`
-			Unit  string  `json:"unit"`
-		}
-	}
-	Visibility struct {
-		Distance float64 `json:"distance"`
-		Unit     string  `json:"unit"`
-	}
-	CloudCover               float64 `json:"cloudCover"`
-	CurrentConditionsHistory struct {
-		TemperatureChange struct {
-			Degrees float64 `json:"degrees"`
-			Unit    string  `json:"unit"`
-		}
-		MaxTemperature struct {
-			Degrees float64 `json:"degrees"`
-			Unit    string  `json:"unit"`
-		}
-		MinTemperature struct {
-			Degrees float64 `json:"degrees"`
-			Unit    string  `json:"unit"`
-		}
-		Qpf struct {
-			Quantity float64 `json:"quantity"`
-			Unit     string  `json:"unit"`
-		}
-	}
-}
-
-type GeoData struct {
-	Results []struct {
-		Geometry struct {
-			Location struct {
-				Lat float64 `json:"lat"`
-				Lng float64 `json:"lng"`
-			} `json:"location"`
-		} `json:"geometry"`
-	} `json:"results"`
-}
-
-type WeartherApiData struct {
-	Lat            float64 `json:"lat"`
-	Lon            float64 `json:"lon"`
-	Timezone       string  `json:"timezone"`
-	TimezoneOffset int     `json:"timezone_offset"`
-	Current        struct {
-		Dt         int64   `json:"dt"`
-		Sunrise    int64   `json:"sunrise"`
-		Sunset     int64   `json:"sunset"`
-		Temp       float64 `json:"temp"`
-		FeelsLike  float64 `json:"feels_like"`
-		Pressure   float64 `json:"pressure"`
-		Humidity   float64 `json:"humidity"`
-		DewPoint   float64 `json:"dew_point"`
-		Clouds     float64 `json:"clouds"`
-		Uvi        float64 `json:"uvi"`
-		Visibility float64 `json:"visibility"`
-		WindSpeed  float64 `json:"wind_speed"`
-		WindGust   float64 `json:"wind_gust"`
-		WindDeg    int     `json:"wind_deg"`
-		Weather    []struct {
-			Id          int    `json:"id"`
-			Main        string `json:"main"`
-			Description string `json:"description"`
-			Icon        string `json:"icon"`
-		} `json:"weather"`
-	}
-}
-
-type FormFields struct {
-	City    string
-	Country string
-}
 
 func main() {
 	if err := godotenv.Load(); err != nil {
 		fmt.Println("Error loading .env file:", err)
 	}
 
-	// Get city name and country name from command line argument
-	// if len(os.Args) < 3 {
-	// 	fmt.Println("Usage: go run main.go <city_name> <country_name>")
-	// 	return
-	// }
-	// city := os.Args[1]
-	// country := os.Args[2]
+	e := echo.New()
+	e.Use(middleware.RequestLogger())
+	e.GET("/weather", getWeatherApi)
 
-	r := gin.Default()
-	r.GET("/weather", getWeatherApi)
-	r.Run(":8080")
+	if err := e.Start(":1323"); err != nil {
+		e.Logger.Error("failed to start server", "error", err)
+	}
 }
 
-func getWeatherApi(c *gin.Context) {
-	city := c.Query("city")
-	country := c.Query("country")
+func getWeatherApi(c *echo.Context) error {
+	form := new(internal.FormFields)
+	if err := c.Bind(form); err != nil {
+		return c.JSON(http.StatusBadRequest, "Invalid form data")
+	}
+	city := form.City
+	country := form.Country
 
 	if city == "" || country == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing city or country"})
-		return
+		return c.JSON(http.StatusBadRequest, "Missing city or country")
 	}
 	getWeather(city, country, c)
+	return nil
 }
 
-func getWeather(city string, country string, c *gin.Context) {
+func getWeather(city string, country string, c *echo.Context) {
 	// Get API key from environment variable
 	weatherApiKey := os.Getenv("WEATHER_API_KEY")
 	if weatherApiKey == "" {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "WEATHER_API_KEY environment variable is not set"})
+		c.JSON(http.StatusInternalServerError, "WEATHER_API_KEY environment variable is not set")
 		return
 	}
 
 	//get lat and lon from city name using Google Geocoding API
-	lat, lon, err := getLetLong(city, country)
+	lat, lon, err := getLatLong(city, country)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, "error: "+err.Error())
 		return
 	}
 
@@ -199,20 +68,20 @@ func getWeather(city string, country string, c *gin.Context) {
 	// Make HTTP request
 	resp, err := http.Get(url)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error making request to Weather API"})
+		c.JSON(http.StatusInternalServerError, map[string]any{"error": "Error making request to Weather API"})
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Weather API returned status code " + resp.Status})
+		c.JSON(http.StatusInternalServerError, map[string]any{"error": "Weather API returned status code " + resp.Status})
 		return
 	}
 
 	// Read response body
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error reading response from Weather API"})
+		c.JSON(http.StatusInternalServerError, map[string]any{"error": "Error reading response from Weather API"})
 		return
 	}
 
@@ -225,15 +94,15 @@ func getWeather(city string, country string, c *gin.Context) {
 	// 	}
 	// 	parseResponseFromGoogle(data, w)
 	// } else {
-	var data WeartherApiData
+	var data internal.WeartherApiData
 	if err := json.Unmarshal(body, &data); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Error parsing JSON from OpenWeather API"})
+		c.JSON(http.StatusInternalServerError, map[string]any{"error": "Error parsing JSON from OpenWeather API"})
 		return
 	}
 	parseResponseFromOpenWeather(data, c, city, country)
 }
 
-func getLetLong(city string, country string) (float64, float64, error) {
+func getLatLong(city string, country string) (float64, float64, error) {
 	//get lat and lon from city name using Google Geocoding API
 	googleMapsApiKey := os.Getenv("GOOGLE_MAPS_API_KEY")
 	if googleMapsApiKey == "" {
@@ -252,7 +121,7 @@ func getLetLong(city string, country string) (float64, float64, error) {
 	if err != nil {
 		return 0, 0, fmt.Errorf("error reading response from Google Maps API: %v", err)
 	}
-	var geoData GeoData
+	var geoData internal.GeoData
 	if err := json.Unmarshal(geoBody, &geoData); err != nil {
 		return 0, 0, fmt.Errorf("error parsing JSON from Google Maps API: %v", err)
 	}
@@ -267,9 +136,9 @@ func getLetLong(city string, country string) (float64, float64, error) {
 	return lat, lon, nil
 }
 
-func parseResponseFromGoogle(data GoogleWeatherData, c *gin.Context, city string, country string) {
+func parseResponseFromGoogle(data internal.GoogleWeatherData, c *echo.Context, city string, country string) {
 	// Print weather information
-	c.JSON(http.StatusOK, gin.H{
+	c.JSON(http.StatusOK, map[string]any{
 		"city":        city,
 		"country":     country,
 		"temperature": data.Temperature.Degrees,
@@ -279,9 +148,9 @@ func parseResponseFromGoogle(data GoogleWeatherData, c *gin.Context, city string
 	})
 }
 
-func parseResponseFromOpenWeather(data WeartherApiData, c *gin.Context, city string, country string) {
+func parseResponseFromOpenWeather(data internal.WeartherApiData, c *echo.Context, city string, country string) {
 	// Print weather information
-	c.JSON(http.StatusOK, gin.H{
+	c.JSON(http.StatusOK, map[string]any{
 		"city":        city,
 		"country":     country,
 		"temperature": data.Current.Temp,
